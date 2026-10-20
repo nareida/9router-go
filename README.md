@@ -14,6 +14,10 @@ limit is ~20 MB and the main branch's `.git` alone is ~33 MB.
 
 ## First boot
 
+Default first-run dashboard password is `123456` (matches upstream). Change
+it immediately in Settings after first login. If you already booted once with
+a different password, delete `$HOME/data/db/data.sqlite` to reset.
+
 The script prints a `BOOTSTRAP` dashboard password to the console log. Save it,
 log in, change it. The JWT secret is auto-generated and persisted to `$HOME/data/.jwt-secret`.
 

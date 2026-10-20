@@ -10,7 +10,8 @@
 #      limit. This branch (botkeep) contains ONLY this script (~4 KB).
 #   3. The 9router-go release binary is ~44 MB — far above any import limit.
 #      => Solution: download the prebuilt single binary from GitHub Releases
-#         at container start. No git clone of upstream, no Go compile.
+#         (mirrored to this fork: nareida/9router-go) at container start.
+#         No git clone of upstream, no Go compile.
 #         9router-go ships the Svelte dashboard EMBEDDED in the binary, so
 #         unlike keirouter/OmniRoute there is no separate frontend-dist fetch
 #         and no npm install — one curl, one chmod, one exec.
@@ -54,10 +55,11 @@ BIN="$APP_DIR/9router-go"
 STAMP="$APP_DIR/.9router-version"
 
 # Resolve "latest" to a concrete tag for the stamp (so we don't re-download
-# every restart when the version hasn't changed).
+# every restart when the version hasn't changed). Resolve against THIS fork's
+# releases (binary is mirrored here) so we're self-contained.
 if [ "$NINEROUTER_VERSION" = "latest" ]; then
   RESOLVED_VERSION="$(curl -fsSL --retry 3 \
-    https://api.github.com/repos/luqman-v1/9router-go/releases/latest \
+    https://api.github.com/repos/nareida/9router-go/releases/latest \
     | grep '"tag_name"' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
   [ -n "$RESOLVED_VERSION" ] || die "could not resolve latest 9router-go version"
 else
@@ -70,8 +72,8 @@ else
   info "Downloading 9router-go $RESOLVED_VERSION (~44 MB)..."
   DL_DIR="$(mktemp -d)"
   TMP_BIN="$DL_DIR/9router-go"
-  # -f: a proxy error page must fail loudly instead of writing HTML as the binary.
-  URL="https://github.com/luqman-v1/9router-go/releases/download/${RESOLVED_VERSION}/9router-go-linux-amd64"
+  # Download from THIS fork's mirrored release (self-contained).
+  URL="https://github.com/nareida/9router-go/releases/download/${RESOLVED_VERSION}/9router-go-linux-amd64"
   curl -fsSL --retry 3 --retry-delay 2 "$URL" -o "$TMP_BIN" \
     || die "download failed: $URL"
   [ -s "$TMP_BIN" ] || die "download produced an empty file"

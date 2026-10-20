@@ -9,8 +9,8 @@ limit is ~20 MB and the main branch's `.git` alone is ~33 MB.
 1. Botkeep panel → new workload → profile **Go** → import repo `nareida/9router-go`,
    branch **`botkeep`**.
 2. Start command: `bash botkeep-start.sh`
-3. The script downloads the latest 9router-go release binary (~44 MB) from GitHub
-   Releases at container start — nothing large is committed to this branch.
+3. The script downloads the latest 9router-go release binary (~44 MB) from THIS fork's mirrored
+   GitHub Releases at container start — nothing large is committed to this branch.
 
 ## First boot
 

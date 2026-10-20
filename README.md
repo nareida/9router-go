@@ -437,6 +437,31 @@ services:
 docker compose up -d
 ```
 
+## Deploy ke Botkeep.cloud
+
+Botkeep mendukung runtime Go untuk workload 24/7 tanpa renewal timer. Repo ini menyertakan `botkeep-start.sh` sebagai start script.
+
+1. Daftar akun di [botkeep.cloud](https://botkeep.cloud/) — Founder Free: 5 slot, 2GB RAM, 1.5 vCPU, 2GB storage.
+2. Buat workload baru → pilih profile **Go** → import repo ini.
+3. Start command:
+```bash
+bash botkeep-start.sh
+```
+4. Env var yang di-set di panel Botkeep (opsional, sudah ada fallback):
+```bash
+INITIAL_PASSWORD=your-secure-dashboard-password
+JWT_SECRET=your-long-random-jwt-secret
+DATA_DIR=/path/to/persistent/data
+```
+5. Start dari panel. Port akan diambil dari env yang disediakan Botkeep.
+
+`botkeep-start.sh` akan:
+- membaca port dari `SERVER_PORT` (lalu `PORT`, fallback `20130`) dan menjalankan binary di `0.0.0.0:$PORT`
+- men-download binary release terbaru dari GitHub Releases saat container start (binary tidak pernah di-commit ke repo)
+- menghasilkan password dashboard acak + JWT secret acak saat first run bila panel tidak menyediakannya (password dicetak sekali ke stdout — simpan segera)
+
+> **Catatan keamanan:** Jangan biarkan password default (`123456`) di host publik. Set `INITIAL_PASSWORD` di panel Botkeep sebelum start pertama, atau catat password acak yang dicetak ke stdout saat first run lalu ganti dari dashboard.
+
 ## Cross-Compile
 
 ```bash

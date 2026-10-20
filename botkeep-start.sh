@@ -117,17 +117,16 @@ fi
 
 # Dashboard password: INITIAL_PASSWORD is only honored on FIRST run (when the
 # SQLite DB is empty). After that it's stored hashed in the DB and changed via
-# the dashboard. Since Botkeep has no env panel, generate a random password on
-# first boot and print it to stdout (the Botkeep console log) — look for BOOTSTRAP.
+# the dashboard. Default to "123456" (matches upstream 9router-go default) so
+# first login is predictable. Override by setting INITIAL_PASSWORD before start.
 DB_FILE="$DATA_DIR/db/data.sqlite"
 if [ ! -f "$DB_FILE" ] && [ -z "${INITIAL_PASSWORD:-}" ]; then
-  INITIAL_PASSWORD="$(head -c 12 /dev/urandom | base64 | tr -d '/+=' | head -c 16)"
+  INITIAL_PASSWORD="123456"
   export INITIAL_PASSWORD
   echo ""
   echo "========================================================"
   echo " BOOTSTRAP: First-run dashboard password: $INITIAL_PASSWORD"
-  echo " Save this now — it will NOT be shown again."
-  echo " Change it in the dashboard after first login."
+  echo " Change it immediately in Settings after first login."
   echo "========================================================"
   echo ""
 fi

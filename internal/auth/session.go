@@ -25,7 +25,8 @@ import (
 const (
 	// CookieName is the dashboard session cookie name (upstream parity).
 	CookieName = "auth_token"
-	// TokenTTL is the session lifetime (upstream SESSION_MAX_AGE_SEC = 24h).
+	// TokenTTL is the fallback session lifetime (upstream SESSION_MAX_AGE_SEC = 24h),
+	// used when settings.sessionTimeout is absent or unparsable.
 	TokenTTL = 24 * time.Hour
 	// CLITokenHeader lets local CLI clients bypass the login gate, mirroring
 	// upstream's x-9r-cli-token bypass in dashboardGuard.
@@ -36,6 +37,21 @@ const (
 // persisted DATA_DIR/jwt-secret generated at config load.
 func Secret() string {
 	return config.LoadConfig().JWTSecret
+}
+
+// SessionTTL returns the dashboard session lifetime from settings.sessionTimeout
+// ("30m", "1h", "24h"...), falling back to TokenTTL (24h) when absent/unparsable
+// so a bad value can never lock the operator out or grant infinite sessions.
+func SessionTTL(repo *db.Repo) time.Duration {
+	raw, err := repo.GetSettingsRaw()
+	if err != nil || raw == nil {
+		return TokenTTL
+	}
+	s, _ := raw["sessionTimeout"].(string)
+	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil && d >= time.Minute && d <= 30*24*time.Hour {
+		return d
+	}
+	return TokenTTL
 }
 
 // RequireLogin mirrors upstream's `settings.requireLogin !== false`: login is
@@ -68,6 +84,9 @@ type SessionClaims struct {
 	Saml          bool   `json:"saml,omitempty"`
 	SamlName      string `json:"samlName,omitempty"`
 	SamlEmail     string `json:"samlEmail,omitempty"`
+	// ttlOverride carries the settings-driven session lifetime into SignWith.
+	// Unexported: never marshaled into the JWT payload.
+	ttlOverride time.Duration `json:"-"`
 	Iat           int64  `json:"iat"`
 	Exp           int64  `json:"exp"`
 }
@@ -78,10 +97,21 @@ func Sign(secret string, now time.Time) (string, error) {
 	return SignWith(secret, now, SessionClaims{Authenticated: true})
 }
 
+// SignWithTTL creates a signed HS256 JWT with an explicit session lifetime
+// (from settings.sessionTimeout), so dashboard-issued tokens honor it.
+func SignWithTTL(secret string, now time.Time, ttl time.Duration) (string, error) {
+	return SignWith(secret, now, SessionClaims{Authenticated: true, ttlOverride: ttl})
+}
+
 // SignWith creates a signed HS256 JWT with extra claims (SSO login flows).
+// extra.ttlOverride, when positive, replaces the default 24h expiry.
 func SignWith(secret string, now time.Time, extra SessionClaims) (string, error) {
 	if secret == "" {
 		return "", errors.New("no jwt secret available")
+	}
+	ttl := TokenTTL
+	if extra.ttlOverride > 0 {
+		ttl = extra.ttlOverride
 	}
 	payload, err := json.Marshal(SessionClaims{
 		Authenticated: true,
@@ -92,7 +122,7 @@ func SignWith(secret string, now time.Time, extra SessionClaims) (string, error)
 		SamlName:      extra.SamlName,
 		SamlEmail:     extra.SamlEmail,
 		Iat:           now.Unix(),
-		Exp:           now.Add(TokenTTL).Unix(),
+		Exp:           now.Add(ttl).Unix(),
 	})
 	if err != nil {
 		return "", err
@@ -195,8 +225,8 @@ func secureCookie(r *http.Request) bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("AUTH_COOKIE_SECURE")), "true")
 }
 
-// SetCookie writes the session cookie (httpOnly, SameSite=Lax, 24h max-age).
-func SetCookie(w http.ResponseWriter, r *http.Request, token string) {
+// SetCookie writes the session cookie (httpOnly, SameSite=Lax, TTL max-age).
+func SetCookie(w http.ResponseWriter, r *http.Request, token string, ttl time.Duration) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    token,
@@ -204,7 +234,7 @@ func SetCookie(w http.ResponseWriter, r *http.Request, token string) {
 		HttpOnly: true,
 		Secure:   secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   int(TokenTTL.Seconds()),
+		MaxAge:   int(ttl.Seconds()),
 	})
 }
 

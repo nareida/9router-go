@@ -68,12 +68,13 @@ func (h *DashboardHandler) HandleAuthLogin(w http.ResponseWriter, r *http.Reques
 			})
 			return
 		}
-		token, err := auth.Sign(auth.Secret(), time.Now())
+		ttl := auth.SessionTTL(h.Repo)
+		token, err := auth.SignWithTTL(auth.Secret(), time.Now(), ttl)
 		if err != nil {
 			writePlainError(w, http.StatusInternalServerError, "Failed to create session")
 			return
 		}
-		auth.SetCookie(w, r, token)
+		auth.SetCookie(w, r, token, ttl)
 		noStore(w)
 		handlerutil.WriteJSON(w, http.StatusOK, map[string]any{
 			"success":            true,

@@ -262,7 +262,7 @@ func sanitizeProviderConnection(c *models.ProviderConnection) map[string]any {
 			"connectionProxyEnabled", "connectionProxyUrl", "connectionNoProxy",
 			"githubLogin", "githubName", "githubEmail", "githubUserId",
 			"username", "firstName", "lastName", "authMethod", "authKind",
-			"profileArn",
+			"profileArn", "soulMode",
 		} {
 			if v, ok := psd[f]; ok && v != nil {
 				out[f] = v
@@ -344,6 +344,17 @@ func (h *DashboardHandler) HandleCreateConnection(w http.ResponseWriter, r *http
 	}
 	if len(req.ProviderSpecificData) > 0 {
 		dataMap["providerSpecificData"] = req.ProviderSpecificData
+	}
+	// Soul mode defaults ON for every connection (parity with 9router-v2), so
+	// a provider added later is covered without an extra per-connection step.
+	// Stamp it explicitly at creation; an explicit false survives because it is
+	// already present in the map (soul.Enabled reads the value, not the absence).
+	if psd, ok := dataMap["providerSpecificData"].(map[string]any); ok {
+		if _, set := psd["soulMode"]; !set {
+			psd["soulMode"] = true
+		}
+	} else {
+		dataMap["providerSpecificData"] = map[string]any{"soulMode": true}
 	}
 	if req.TestStatus != "" {
 		dataMap["testStatus"] = req.TestStatus

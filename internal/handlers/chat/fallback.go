@@ -18,6 +18,7 @@ import (
 	"9router/proxy/internal/log"
 	"9router/proxy/internal/providers"
 	"9router/proxy/internal/proxy/executor"
+	"9router/proxy/internal/soul"
 	"9router/proxy/internal/tokensaver"
 	"9router/proxy/internal/tracing"
 	"9router/proxy/internal/translator"
@@ -215,6 +216,26 @@ func (h *ChatHandler) tryForwardWithConnection(f forwardRequestParams) error {
 	translateResponse, endpoint := f.TranslateResponse, f.Endpoint
 	ctx = translator.WithUsageCapture(ctx)
 
+	// SOUL MODE (ported from 9router-v2): when the connection has
+	// providerSpecificData.soulMode=true, drop the client's system messages
+	// and re-emit them as an identity-override block on the first user
+	// message. This is what stops an upstream provider's own persona
+	// ("You are Qoder, a coding assistant") from replacing the client's.
+	//
+	// Applied here rather than at the call sites because every forwarding
+	// path (pinned connection, account fallback, combo/fusion) funnels
+	// through tryForwardWithConnection, so one hook covers all of them.
+	// InjectJSON is fail-open: on any parse problem it returns the original
+	// bytes untouched, so soul mode can never break a request.
+	if connData != nil && soul.Enabled(connData.ProviderSpecificData) {
+		if injected, didInject, canary := soul.InjectJSON(body); didInject {
+			body = injected
+			log.Debug("soul", "identity override injected",
+				"provider", provider, "model", model,
+				"connection", connectionID, "canary", canary)
+		}
+	}
+
 	providerCfg, err := h.getProviderConfig(provider, connData)
 	if err != nil {
 		return fmt.Errorf("get config for %s/%s: %w", provider, model, err)
@@ -283,7 +304,8 @@ func (h *ChatHandler) tryForwardWithConnection(f forwardRequestParams) error {
 	// OpenAI format before the fallback, and passing endpoint "/v1/v1/messages"
 	// alone would wrongly inject a top-level "system" the upstream ignores.
 	claudeNative := isAnthropic && (endpoint == "/v1/v1/messages" || endpoint == "/v1/messages")
-	pipedBody := h.applyTokenSavers(body, claudeNative)
+	soulMode := connData != nil && soul.Enabled(connData.ProviderSpecificData)
+	pipedBody := h.applyTokenSavers(body, claudeNative, soulMode)
 	var claudeToolMap map[string]string
 	if isAnthropic {
 		if !claudeNative {
@@ -475,7 +497,7 @@ func isClientCanceled(ctx context.Context, err error) bool {
 // /v1/messages): system prompts must go to the top-level "system" field —
 // a role:"system" message is rejected by the Anthropic API.
 // false from compress/inject means nothing changed (or unparseable) — keep original, not a failure.
-func (h *ChatHandler) applyTokenSavers(body []byte, claudeNative bool) []byte {
+func (h *ChatHandler) applyTokenSavers(body []byte, claudeNative bool, soulMode bool) []byte {
 	// Prompt-injection guard: tag (never block) flagged user content. Early
 	// detection here means operators can see abuse before it reaches upstream.
 	// Toggle via settings.injectionGuardEnabled (off bypasses the scan).
@@ -504,6 +526,22 @@ func (h *ChatHandler) applyTokenSavers(body []byte, claudeNative bool) []byte {
 		prompt := tokensaver.GetPonytailPrompt(h.TokenSaver.PonytailLevel())
 		if next, did := inject(out, prompt); did {
 			out = next
+		}
+	}
+	// SOUL MODE re-apply: the injections above re-introduce a system-role
+	// message (caveman / ponytail), which would hand the upstream provider a
+	// system prompt to override again — defeating the override that already
+	// ran in tryForwardWithConnection. Soul mode is a hard guarantee that no
+	// system role reaches the wire, so re-fold any freshly injected system
+	// message into the existing identity block.
+	//
+	// Must be the LAST step, after every injector. Skipped for claudeNative:
+	// the Anthropic API takes the persona in the top-level "system" field,
+	// not in a role:"system" message, so there is no system role to strip and
+	// folding it into a user message would lose the system-level priority.
+	if soulMode && !claudeNative {
+		if injected, did, _ := soul.InjectJSON(out); did {
+			out = injected
 		}
 	}
 	return out

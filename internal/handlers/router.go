@@ -62,7 +62,6 @@ func SetupRoutes(r interface {
 	r.Get("/api/models/catalog-sync", chatH.HandleCatalogSyncStatus)
 	r.Post("/api/models/catalog-sync", chatH.HandleCatalogSyncTrigger)
 	r.Get("/api/models", chatH.HandleModels)
-	r.Post("/api/models/test", chatH.HandleTestModel)
 	r.Post("/chat/completions", chatH.HandleChatCompletions)
 	r.Post("/messages", chatH.HandleMessages)
 	r.Post("/messages/count_tokens", chatH.HandleCountTokens)
@@ -151,6 +150,8 @@ func SetupRoutes(r interface {
 func SetupDashboardRoutes(r chi.Router, repo *db.Repo) {
 	dashH := dashboard.NewDashboardHandler(repo)
 	ssoH := sso.NewHandler(repo)
+	// Handler for /api/models/test (declared below, dashboard-auth group).
+	chatH := chat.NewChatHandler(repo, nil)
 
 	r.Get("/api/connections", dashH.HandleGetConnections)
 	r.Get("/api/providers", dashH.HandleGetProvidersClient)
@@ -181,6 +182,11 @@ func SetupDashboardRoutes(r chi.Router, repo *db.Repo) {
 	r.Get("/api/providers/{id}/models", dashH.HandleGetConnectionModels)
 
 	r.Get("/api/combos", dashH.HandleGetCombos)
+	// Model health-test lives under dashboard auth, not the API-key group:
+	// the SPA only carries the session cookie, so mounting it behind
+	// RequireApiKey made the dashboard "test model" button 401 forever.
+	// RequireDashboardAuth still accepts Bearer API keys, so CLI callers keep working.
+	r.Post("/api/models/test", chatH.HandleTestModel)
 	r.Post("/api/combos", dashH.HandleCreateCombo)
 	r.Put("/api/combos/{id}", dashH.HandleUpdateCombo)
 	r.Delete("/api/combos/{id}", dashH.HandleDeleteCombo)

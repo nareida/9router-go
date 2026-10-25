@@ -326,6 +326,20 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(path, { ...options, headers })
   if (!res.ok) {
+    // Session expired (401 from the server on a non-auth endpoint): the
+    // httpOnly cookie is dead but the localStorage flag still says "true",
+    // so the SPA keeps rendering the dashboard with every action failing.
+    // Tell the app root; App.svelte flips isAuthenticatedState=false and
+    // shows the login view (a raw location change would fight the SPA router).
+    if (
+      res.status === 401 &&
+      typeof window !== 'undefined' &&
+      !path.startsWith('/api/auth/')
+    ) {
+      sessionStorage.removeItem('9router_auth')
+      localStorage.removeItem('9router_auth')
+      window.dispatchEvent(new CustomEvent('9router:unauthorized'))
+    }
     let errText = ''
     try {
       const text = await res.text()

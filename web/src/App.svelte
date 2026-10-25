@@ -124,9 +124,11 @@
     try {
       const authStatus = await api.checkRequireLogin()
       requireLogin = !!authStatus.requireLogin
-      // Trust the server session (auth_token cookie) first; the localStorage
-      // flag is only a hint because the cookie is httpOnly and unreadable by JS.
-      isAuthenticatedState = !!authStatus.authenticated || isAuthenticated() || !requireLogin
+      // The server's `authenticated` claim is the only real truth (the
+      // auth_token cookie is httpOnly). The localStorage flag is a hint from
+      // a previous login and MUST NOT resurrect a dead session here — doing
+      // so caused an endpoint<->login reload loop after expiry.
+      isAuthenticatedState = !!authStatus.authenticated || !requireLogin
     } catch {
       requireLogin = false
       isAuthenticatedState = true
@@ -155,6 +157,15 @@
     }
     window.addEventListener('popstate', handlePopState)
 
+    // Session-death hook from api client: flip to the login view without a
+    // full page reload (reload would re-run checkAuth while the stale
+    // localStorage flag still exists and bounce back to the dashboard).
+    function handleUnauthorized() {
+      isAuthenticatedState = false
+      if (activeTab !== 'login') navigate('login')
+    }
+    window.addEventListener('9router:unauthorized', handleUnauthorized)
+
     const interval = setInterval(async () => {
       if (typeof document !== 'undefined' && document.hidden) return
       try {
@@ -172,6 +183,7 @@
     return () => {
       clearInterval(interval)
       window.removeEventListener('popstate', handlePopState)
+      window.removeEventListener('9router:unauthorized', handleUnauthorized)
     }
   })
 

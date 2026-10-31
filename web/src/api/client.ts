@@ -326,6 +326,28 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   }
   const res = await fetch(path, { ...options, headers })
   if (!res.ok) {
+    // Read the error body first: a 401 can mean two very different things.
+    //   - the dashboard session cookie is dead  → real logout, show login
+    //   - the endpoint is API-key-only and the browser carries no key
+    //     (`invalid_api_key`, e.g. /api/version) → the operator is still
+    //     signed in, so this must NOT log them out.
+    // Treating the second case as a dead session made the SPA ping-pong
+    // between /login and /dashboard/endpoint forever (the "hard reload
+    // after login" report).
+    let errText = ''
+    let errCode = ''
+    try {
+      const text = await res.text()
+      try {
+        const errJson = JSON.parse(text)
+        errCode = errJson?.error?.code || errJson?.code || ''
+        errText = errJson.error?.message || errJson.error || errJson.message || JSON.stringify(errJson)
+      } catch {
+        errText = text
+      }
+    } catch {
+      errText = ''
+    }
     // Session expired (401 from the server on a non-auth endpoint): the
     // httpOnly cookie is dead but the localStorage flag still says "true",
     // so the SPA keeps rendering the dashboard with every action failing.
@@ -333,24 +355,13 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     // shows the login view (a raw location change would fight the SPA router).
     if (
       res.status === 401 &&
+      errCode !== 'invalid_api_key' &&
       typeof window !== 'undefined' &&
       !path.startsWith('/api/auth/')
     ) {
       sessionStorage.removeItem('9router_auth')
       localStorage.removeItem('9router_auth')
       window.dispatchEvent(new CustomEvent('9router:unauthorized'))
-    }
-    let errText = ''
-    try {
-      const text = await res.text()
-      try {
-        const errJson = JSON.parse(text)
-        errText = errJson.error?.message || errJson.error || errJson.message || JSON.stringify(errJson)
-      } catch {
-        errText = text
-      }
-    } catch {
-      errText = ''
     }
     throw new Error(errText || `Request failed with status ${res.status}`)
   }

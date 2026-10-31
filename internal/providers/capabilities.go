@@ -248,6 +248,7 @@ var patternCapabilities = []patternCapability{
 	{"*claude*", Capabilities{Vision: true, Reasoning: true, Search: true, Tools: true}},
 
 	{"*gemini*image*", Capabilities{Vision: true, ImageOutput: true, Tools: true}},
+	{"*gemini-4*", Capabilities{Vision: true, AudioInput: true, VideoInput: true, Reasoning: true, Search: true, Tools: true}},
 	{"*gemini-3.8*", Capabilities{Vision: true, AudioInput: true, VideoInput: true, Reasoning: true, Search: true, Tools: true}},
 	{"*gemini-3*pro*", Capabilities{Vision: true, AudioInput: true, VideoInput: true, Reasoning: true, Search: true, Tools: true}},
 	{"*gemini-3*", Capabilities{Vision: true, AudioInput: true, VideoInput: true, Reasoning: true, Search: true, Tools: true}},
@@ -370,7 +371,7 @@ func GetModelTokenLimits(model string) (contextWindow int, maxOutput int) {
 	switch {
 	case strings.Contains(m, "deepseek-v4.1-flash") || strings.Contains(m, "deepseek-v4-flash"):
 		return 1000000, 128000
-	case strings.Contains(m, "gemini-1.5") || strings.Contains(m, "gemini-2.0") || strings.Contains(m, "gemini-2.5") || strings.Contains(m, "gemini-3") || strings.Contains(m, "glm-5.3-flash"):
+	case strings.Contains(m, "gemini-1.5") || strings.Contains(m, "gemini-2.0") || strings.Contains(m, "gemini-2.5") || strings.Contains(m, "gemini-3") || strings.Contains(m, "gemini-4") || strings.Contains(m, "glm-5.3-flash"):
 		return 1048576, 65536
 	case strings.Contains(m, "grok-4.5") || strings.Contains(m, "grok-4.6"):
 		return 524288, 32768

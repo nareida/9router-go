@@ -30,6 +30,13 @@ func ProvideDatabase(lc fx.Lifecycle, cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("database connect: %w", err)
 	}
 
+	if err := db.EnsureCoreSchema(conn); err != nil {
+		_, statErr := conn.Exec("SELECT 1")
+		if statErr == nil {
+			return nil, fmt.Errorf("database schema: %w", err)
+		}
+	}
+
 	lc.Append(fx.Hook{
 		OnStop: func(ctx context.Context) error {
 			return conn.Close()

@@ -43,12 +43,11 @@ func SetupRoutes(r interface {
 
 	dashH := dashboard.NewDashboardHandler(repo)
 	// Chat, Version & Models Domain
-	r.Get("/version", chatH.HandleVersion)
-	r.Get("/api/version", chatH.HandleVersion)
-	r.Get("/api/version/status", chatH.HandleVersionStatus)
-	r.Get("/api/version/check", chatH.HandleCheckUpdate)
-	r.Get("/changelog", chatH.HandleChangelog)
-	r.Get("/api/changelog", chatH.HandleChangelog)
+	// NOTE: /version, /api/version*, /changelog live in SetupDashboardRoutes
+	// (session cookie OR api key OR CLI token). They are informational and
+	// the dashboard Sidebar fetches them with only the login cookie; while
+	// they sat in this API-key-only group every dashboard load got a 401
+	// `invalid_api_key`, which bounced the operator back to /login in a loop.
 	r.Get("/models", chatH.HandleModels)
 	r.Get("/models/info", chatH.HandleModelsInfo)
 	r.Get("/models/{kind}", chatH.HandleModelsByKind)
@@ -93,9 +92,9 @@ func SetupRoutes(r interface {
 	r.Post("/proxy-pools/deno-deploy", mediaH.HandleDenoDeploy)
 	r.Post("/proxy-pools/cloudflare-deploy", mediaH.HandleCloudflareDeploy)
 
-	// CLI Tools Status Domain (dashboard batch status for installed CLI tools)
-	r.Get("/cli-tools/all-statuses", media.NewCLIToolsHandler().HandleAllStatuses)
-	r.Get("/api/cli-tools/all-statuses", media.NewCLIToolsHandler().HandleAllStatuses)
+	// CLI Tools Status Domain — moved to SetupDashboardRoutes (session cookie
+	// OR api key OR CLI token). The dashboard CLI Tools tab fetches these with
+	// only the login cookie, so the API-key-only group 401'd them.
 
 	// Headroom Management Domain (token-compression proxy lifecycle + dashboard proxy)
 	headroomH := media.NewHeadroomHandler(repo)
@@ -152,6 +151,19 @@ func SetupDashboardRoutes(r chi.Router, repo *db.Repo) {
 	ssoH := sso.NewHandler(repo)
 	// Handler for /api/models/test (declared below, dashboard-auth group).
 	chatH := chat.NewChatHandler(repo, nil)
+
+	// Version & changelog: informational, consumed by the dashboard Sidebar
+	// with only a session cookie. Must NOT sit behind RequireApiKey.
+	r.Get("/version", chatH.HandleVersion)
+	r.Get("/api/version", chatH.HandleVersion)
+	r.Get("/api/version/status", chatH.HandleVersionStatus)
+	r.Get("/api/version/check", chatH.HandleCheckUpdate)
+	r.Get("/changelog", chatH.HandleChangelog)
+	r.Get("/api/changelog", chatH.HandleChangelog)
+
+	// CLI Tools batch status (dashboard CLI Tools tab).
+	r.Get("/cli-tools/all-statuses", media.NewCLIToolsHandler().HandleAllStatuses)
+	r.Get("/api/cli-tools/all-statuses", media.NewCLIToolsHandler().HandleAllStatuses)
 
 	r.Get("/api/connections", dashH.HandleGetConnections)
 	r.Get("/api/providers", dashH.HandleGetProvidersClient)

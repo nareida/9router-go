@@ -376,7 +376,121 @@ type ModelInfoObject struct {
 	MaxCompletionTokens int                           `json:"max_completion_tokens,omitempty"`
 }
 
+// syncCompatibleNodeLimits fetches a custom node's own /models catalog once
+// (cached in memory) and records each model id's context_length so the
+// provider's own published figures drive /v1/models — the authoritative
+// "auto-detect dari provider" for openai/anthropic-compatible endpoints.
+func (h *ChatHandler) syncCompatibleNodeLimits(ctx context.Context, providerID string, conn *models.ProviderConnection) {
+	if h.Repo == nil || conn == nil || h.Client == nil {
+		return
+	}
+	if !strings.HasPrefix(providerID, "openai-compatible-") && !strings.HasPrefix(providerID, "anthropic-compatible-") {
+		return
+	}
+	var connData struct {
+		APIKey               string         `json:"apiKey"`
+		AccessToken          string         `json:"accessToken"`
+		ProviderSpecificData map[string]any `json:"providerSpecificData"`
+	}
+	if conn.Data != "" {
+		_ = json.Unmarshal([]byte(conn.Data), &connData)
+	}
+	apiKey := connData.APIKey
+	if apiKey == "" {
+		apiKey = connData.AccessToken
+	}
+	baseURL := ""
+	if v, ok := connData.ProviderSpecificData["baseUrl"].(string); ok {
+		baseURL = strings.TrimSpace(v)
+	}
+	if baseURL == "" {
+		if _, nodeData, nerr := h.Repo.GetProviderNodeByID(providerID); nerr == nil && nodeData != nil {
+			baseURL = nodeData.BaseURL
+		}
+	}
+	baseURL = strings.TrimSuffix(strings.TrimSpace(baseURL), "/")
+	if apiKey == "" || baseURL == "" {
+		return
+	}
+	headers := map[string]string{"Content-Type": "application/json"}
+	if strings.HasPrefix(providerID, "anthropic-compatible-") {
+		baseURL = strings.TrimSuffix(baseURL, "/messages")
+		headers["x-api-key"] = apiKey
+		headers["anthropic-version"] = "2023-06-01"
+		headers["Authorization"] = "Bearer " + apiKey
+	} else {
+		headers["Authorization"] = "Bearer " + apiKey
+	}
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, baseURL+"/models", nil)
+	if err != nil {
+		return
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := h.Client.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return
+	}
+	var payload struct {
+		Data []map[string]any `json:"data"`
+	}
+	if json.Unmarshal(body, &payload) != nil || len(payload.Data) == 0 {
+		return
+	}
+	// Record under the node id AND its public prefix alias: the custom-models
+	// listing resolves capabilities by `prefix` (e.g. "clv"), while the active
+	// connection loop uses the node id.
+	nodePrefix := ""
+	if v, ok := connData.ProviderSpecificData["prefix"].(string); ok && v != "" {
+		nodePrefix = v
+	}
+	for _, entry := range payload.Data {
+		id, _ := entry["id"].(string)
+		if id == "" {
+			continue
+		}
+		cw := intField(entry, "context_length", "context_window", "contextLength", "max_context_length")
+		mo := intField(entry, "max_output_tokens", "max_completion_tokens", "maxOutput")
+		providers.RegisterProviderLiveLimits(providerID, id, cw, mo)
+		if nodePrefix != "" {
+			providers.RegisterProviderLiveLimits(nodePrefix, id, cw, mo)
+		}
+	}
+}
+
+func intField(m map[string]any, keys ...string) int {
+	for _, k := range keys {
+		switch v := m[k].(type) {
+		case float64:
+			if v > 0 {
+				return int(v)
+			}
+		case int:
+			if v > 0 {
+				return v
+			}
+		case int64:
+			if v > 0 {
+				return int(v)
+			}
+		}
+	}
+	return 0
+}
+
 func (h *ChatHandler) buildModelsList() []ModelInfoObject {
+
 	var data []ModelInfoObject
 	seen := make(map[string]bool)
 	now := time.Now().Unix()
@@ -385,6 +499,15 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 	var activeConnections []*models.ProviderConnection
 	if h.Repo != nil {
 		activeConnections, _ = h.Repo.GetProviderConnections("", true)
+	}
+
+	// Pre-fetch each custom node's own /models catalog so its published
+	// context_length drives limits (auto-detect dari provider).
+	for _, c := range activeConnections {
+		if c == nil || c.Provider == "" {
+			continue
+		}
+		h.syncCompatibleNodeLimits(context.Background(), c.Provider, c)
 	}
 
 	activeAliases := make(map[string]bool)
@@ -458,8 +581,14 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 					ctxLen, maxOut = providers.GetModelTokenLimits(fullID)
 				}
 				caps := providers.GetCapabilitiesDetailForModel(provID, mID)
-				if caps.ContextWindows > 0 && ctxLen == 0 {
+				// Provider auto-detect wins: caps already resolves custom > synced
+				// catalog > substring table, so a catalog figure overrides the
+				// family guess (kimi-k3 is 1M in the catalog, 131k in the table).
+				if caps.ContextWindows > 0 {
 					ctxLen = caps.ContextWindows
+				}
+				if caps.MaxOutput > 0 {
+					maxOut = caps.MaxOutput
 				}
 
 				data = append(data, ModelInfoObject{
@@ -516,8 +645,11 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 				seen[alias] = true
 				ctxLen, maxOut := providers.GetModelTokenLimits(alias)
 				caps := providers.GetCapabilitiesDetailForModel("", alias)
-				if caps.ContextWindows > 0 && ctxLen == 0 {
+				if caps.ContextWindows > 0 {
 					ctxLen = caps.ContextWindows
+				}
+				if caps.MaxOutput > 0 {
+					maxOut = caps.MaxOutput
 				}
 				data = append(data, ModelInfoObject{
 					ID:                  alias,
@@ -543,8 +675,11 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 				seen[c.Name] = true
 				ctxLen, maxOut := providers.GetModelTokenLimits(c.Name)
 				caps := providers.GetCapabilitiesDetailForModel("combo", c.Name)
-				if caps.ContextWindows > 0 && ctxLen == 0 {
+				if caps.ContextWindows > 0 {
 					ctxLen = caps.ContextWindows
+				}
+				if caps.MaxOutput > 0 {
+					maxOut = caps.MaxOutput
 				}
 				data = append(data, ModelInfoObject{
 					ID:                  c.Name,
@@ -580,10 +715,16 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 				seen[fullModel] = true
 
 				ctxLen, maxOut := providers.GetModelTokenLimits(fullModel)
+				if cm.ContextWindow > 0 {
+					ctxLen = cm.ContextWindow
+				}
+				if cm.MaxOutput > 0 {
+					maxOut = cm.MaxOutput
+				}
 				if ctxLen == 0 && maxOut == 0 {
 					ctxLen, maxOut = providers.GetModelTokenLimits(cm.ID)
 				}
-				if len(cm.Caps) > 0 {
+				if len(cm.Caps) > 0 || cm.ContextWindow > 0 || cm.MaxOutput > 0 {
 					var caps providers.Capabilities
 					if cm.Caps["vision"] {
 						caps.Vision = true
@@ -603,14 +744,23 @@ func (h *ChatHandler) buildModelsList() []ModelInfoObject {
 					if cm.Caps["audio"] {
 						caps.AudioInput = true
 					}
+					if cm.ContextWindow > 0 {
+						caps.ContextWindow = cm.ContextWindow
+					}
+					if cm.MaxOutput > 0 {
+						caps.MaxOutput = cm.MaxOutput
+					}
 					providers.SetCustomModelCaps(prefix, cm.ID, caps)
 					if prefix != cm.ProviderAlias {
 						providers.SetCustomModelCaps(cm.ProviderAlias, cm.ID, caps)
 					}
 				}
 				caps := providers.GetCapabilitiesDetailForModel(prefix, cm.ID)
-				if caps.ContextWindows > 0 && ctxLen == 0 {
+				if caps.ContextWindows > 0 {
 					ctxLen = caps.ContextWindows
+				}
+				if caps.MaxOutput > 0 {
+					maxOut = caps.MaxOutput
 				}
 				data = append(data, ModelInfoObject{
 					ID:                  fullModel,

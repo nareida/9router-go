@@ -56,7 +56,44 @@ var (
 	globalCatalog *SyncedCatalog
 	syncState     CatalogSyncState
 	syncStateMu   sync.Mutex
+	liveLimitsMu  sync.RWMutex
+	liveLimits    = map[string][2]int{} // "provider|model" -> [contextWindow, maxOutput]
 )
+
+// RegisterProviderLiveLimits records token limits fetched live from a
+// provider's own /models endpoint (a custom node catalog publishes
+// context_length per id — that is the authoritative "auto-detect dari
+// provider" figure, more current than models.dev and exact for the
+// endpoint in use).
+func RegisterProviderLiveLimits(provider, model string, contextWindow, maxOutput int) {
+	if provider == "" || model == "" {
+		return
+	}
+	liveLimitsMu.Lock()
+	liveLimits[strings.ToLower(provider)+"|"+strings.ToLower(model)] = [2]int{contextWindow, maxOutput}
+	liveLimitsMu.Unlock()
+}
+
+// GetProviderLiveLimits returns limits fetched live from the provider's own
+// /models endpoint, when present.
+func GetProviderLiveLimits(provider, model string) (int, int, bool) {
+	liveLimitsMu.RLock()
+	defer liveLimitsMu.RUnlock()
+	base := strings.ToLower(model)
+	if idx := strings.Index(base, ":"); idx != -1 {
+		base = base[:idx]
+	}
+	if v, ok := liveLimits[strings.ToLower(provider)+"|"+base]; ok {
+		return v[0], v[1], true
+	}
+	if idx := strings.Index(base, "/"); idx != -1 {
+		base = base[idx+1:]
+		if v, ok := liveLimits[strings.ToLower(provider)+"|"+base]; ok {
+			return v[0], v[1], true
+		}
+	}
+	return 0, 0, false
+}
 
 // ProviderAliases maps 9router provider IDs to models.dev provider IDs for limit resolution.
 var ProviderAliases = map[string]string{
@@ -103,6 +140,90 @@ func GetCatalogModalities(model string) *SyncedModelModalities {
 		return &m
 	}
 	return nil
+}
+
+// GetCatalogLimits looks up dynamically synced token limits (contextWindow, maxOutput)
+// from models.dev for a provider/model pair, falling back to any provider in the
+// synced catalog that defines limits for that model ID.
+func GetCatalogLimits(provider, model string) (contextWindow, maxOutput int) {
+	if model == "" {
+		return 0, 0
+	}
+	base := strings.ToLower(model)
+	if idx := strings.Index(base, ":"); idx != -1 {
+		base = base[:idx]
+	}
+	candidates := []string{base}
+	if idx := strings.Index(base, "/"); idx != -1 {
+		candidates = append(candidates, base[idx+1:])
+	}
+	if idx := strings.LastIndex(base, "/"); idx != -1 && base[idx+1:] != candidates[len(candidates)-1] {
+		candidates = append(candidates, base[idx+1:])
+	}
+
+	catalogMu.RLock()
+	defer catalogMu.RUnlock()
+	if globalCatalog == nil || globalCatalog.Providers == nil {
+		return 0, 0
+	}
+
+	prov := strings.ToLower(provider)
+	keys := []string{prov}
+	if mapped, ok := ProviderAliases[prov]; ok {
+		keys = append(keys, mapped)
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if byModel, ok := globalCatalog.Providers[key]; ok {
+			for _, cand := range candidates {
+				if lim, found := byModel[cand]; found && (lim.ContextWindow > 0 || lim.MaxOutput > 0) {
+					return lim.ContextWindow, lim.MaxOutput
+				}
+			}
+		}
+	}
+
+	// Fallback across catalog providers when provider is a custom/compatible node alias.
+	// Pick the most common declared window (mode), preferring the mainstream figure
+	// over an outlier gateway's number (engy files kimi-k3 as 1113088; the weight of
+	// the catalog says 1048576/1000000). Ties prefer 1M-family values.
+	bestCW, bestOut := 0, 0
+	counts := make(map[int]int)
+	outByCW := make(map[int][]int)
+	for _, byModel := range globalCatalog.Providers {
+		for _, cand := range candidates {
+			if lim, found := byModel[cand]; found && lim.ContextWindow > 0 {
+				counts[lim.ContextWindow]++
+				if len(outByCW[lim.ContextWindow]) == 0 {
+					outByCW[lim.ContextWindow] = []int{lim.ContextWindow, lim.MaxOutput}
+				} else {
+					outByCW[lim.ContextWindow][1] = maxInt(outByCW[lim.ContextWindow][1], lim.MaxOutput)
+				}
+			}
+		}
+	}
+	for cw, n := range counts {
+		if n > counts[bestCW] || (n == counts[bestCW] && isPreferredWindow(cw)) {
+			bestCW = cw
+		}
+	}
+	if vals, ok := outByCW[bestCW]; ok {
+		bestOut = vals[1]
+	}
+	return bestCW, bestOut
+}
+
+func isPreferredWindow(cw int) bool {
+	return cw == 1048576 || cw == 1000000 || cw == 1040000
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // LoadCatalogFromFile loads cached catalog from disk if it exists.

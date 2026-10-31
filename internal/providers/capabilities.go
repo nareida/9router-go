@@ -81,6 +81,11 @@ type Capabilities struct {
 	Search      bool
 	Tools       bool
 	Reasoning   bool
+	// Token limits a custom model row may declare. Zero means "not declared";
+	// the substring table answers instead. Limits are a declaration, so a
+	// declared number replaces what the family table guessed.
+	ContextWindow int
+	MaxOutput     int
 }
 
 var DefaultCapabilities = Capabilities{
@@ -593,14 +598,56 @@ type CapabilitiesDetail struct {
 	ThinkingEffortSupported bool `json:"thinkingEffortSupported"`
 	ContextWindows          int  `json:"contextWindows,omitempty"`
 	ContextWindow           int  `json:"contextWindow,omitempty"`
+	MaxOutput               int  `json:"maxOutput,omitempty"`
 }
 
 // GetCapabilitiesDetailForModel returns the full JSON-serializable capabilities map for /v1/models.
+// Token limits resolve in order: custom-model declaration > provider limit table > synced models.dev
+// catalog > substring table > 128k floor — so a gateway's own catalog wins over the hardcoded family default.
 func GetCapabilitiesDetailForModel(provider, model string) CapabilitiesDetail {
 	caps := GetCapabilitiesForModel(provider, model)
-	cw, _ := GetModelTokenLimits(model)
+	cw, maxOut := 0, 0
+	if custom, ok := GetCustomModelCaps(provider, model); ok {
+		if custom.ContextWindow > 0 {
+			cw = custom.ContextWindow
+		}
+		if custom.MaxOutput > 0 {
+			maxOut = custom.MaxOutput
+		}
+	} else if custom, ok := GetCustomModelCaps(provider, strings.TrimPrefix(model, provider+"/")); ok {
+		if custom.ContextWindow > 0 {
+			cw = custom.ContextWindow
+		}
+		if custom.MaxOutput > 0 {
+			maxOut = custom.MaxOutput
+		}
+	}
+	// Provider's own /models endpoint is the most authoritative figure.
+	if lcw, lmo, ok := GetProviderLiveLimits(provider, model); ok {
+		if cw == 0 {
+			cw = lcw
+		}
+		if maxOut == 0 {
+			maxOut = lmo
+		}
+	}
+	if cw == 0 {
+		cw, _ = GetCatalogLimits(provider, model)
+	}
+	if maxOut == 0 {
+		_, maxOut = GetCatalogLimits(provider, model)
+	}
+	if cw == 0 {
+		cw, _ = GetModelTokenLimits(model)
+	}
+	if maxOut == 0 {
+		_, maxOut = GetModelTokenLimits(model)
+	}
 	if cw == 0 {
 		cw, _ = GetModelTokenLimits(provider + "/" + model)
+	}
+	if maxOut == 0 {
+		_, maxOut = GetModelTokenLimits(provider + "/" + model)
 	}
 	if cw == 0 {
 		cw = 128000
@@ -617,5 +664,6 @@ func GetCapabilitiesDetailForModel(provider, model string) CapabilitiesDetail {
 		ThinkingEffortSupported: false,
 		ContextWindows:          cw,
 		ContextWindow:           cw,
+		MaxOutput:               maxOut,
 	}
 }

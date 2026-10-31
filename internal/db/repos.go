@@ -486,6 +486,10 @@ type CustomModel struct {
 	Type          string          `json:"type"`
 	Name          string          `json:"name"`
 	Caps          map[string]bool `json:"caps"`
+	ContextWindow int             `json:"contextWindow,omitempty"`
+	ContextLength int             `json:"contextLength,omitempty"`
+	MaxOutput     int             `json:"maxOutput,omitempty"`
+	MaxTokens     int             `json:"maxTokens,omitempty"`
 }
 
 // GetCustomModels returns all custom models from kv scope customModels.
@@ -503,6 +507,25 @@ func (r *Repo) GetCustomModels() ([]*CustomModel, error) {
 		}
 		var cm CustomModel
 		_ = json.Unmarshal([]byte(raw), &cm)
+		var rawMap map[string]any
+		if json.Unmarshal([]byte(raw), &rawMap) == nil {
+			if cm.ContextWindow == 0 {
+				for _, k := range []string{"contextWindow", "context_window", "contextLength", "context_length", "max_context_length"} {
+					if v, ok := rawMap[k].(float64); ok && v > 0 {
+						cm.ContextWindow = int(v)
+						break
+					}
+				}
+			}
+			if cm.MaxOutput == 0 {
+				for _, k := range []string{"maxOutput", "max_output_tokens", "max_completion_tokens", "maxTokens", "max_tokens"} {
+					if v, ok := rawMap[k].(float64); ok && v > 0 {
+						cm.MaxOutput = int(v)
+						break
+					}
+				}
+			}
+		}
 
 		// Fallback parse from key if fields are missing in JSON value:
 		// key format in Next.js: <providerAlias>|<modelId>|<kind> or <providerAlias>/<modelId>/<kind>

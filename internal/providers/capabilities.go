@@ -631,11 +631,11 @@ func GetCapabilitiesDetailForModel(provider, model string) CapabilitiesDetail {
 			maxOut = lmo
 		}
 	}
+	// Catalog supplies the context window only; its maxOutput figures are
+	// provider-dependent and noisy across gateways. The substring table's
+	// family maxOutput is the safer ceiling.
 	if cw == 0 {
 		cw, _ = GetCatalogLimits(provider, model)
-	}
-	if maxOut == 0 {
-		_, maxOut = GetCatalogLimits(provider, model)
 	}
 	if cw == 0 {
 		cw, _ = GetModelTokenLimits(model)

@@ -81,7 +81,6 @@
   $effect(() => {
     if (isCreatingOpen && !editingCombo) {
       modalModels = []
-      modalNameResetKey += 1
     }
   })
 
@@ -137,11 +136,13 @@
   function openCreateModal() {
     editingCombo = null
     modalModels = []
+    modalNameResetKey += 1
     isCreatingOpen = true
   }
   function openEditModal(combo: Combo) {
     editingCombo = combo
     modalModels = [...getComboModels(combo)]
+    modalNameResetKey += 1
     isCreatingOpen = true
   }
   function closeModal() {

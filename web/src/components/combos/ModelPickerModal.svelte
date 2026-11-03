@@ -59,23 +59,19 @@
 
   function normalizeCustoms(res: unknown) {
     const list: Array<{ providerAlias?: string; id: string; name?: string; type?: string }> = []
-    if (Array.isArray(res)) {
-      for (const m of res) {
+    const collect = (arr: unknown[]) => {
+      for (const m of arr) {
         if (m && typeof m === 'object' && typeof (m as { id?: unknown }).id === 'string') {
           list.push(m as { providerAlias?: string; id: string; name?: string; type?: string })
         }
       }
+    }
+    if (Array.isArray(res)) {
+      collect(res as unknown[])
     } else if (res && typeof res === 'object') {
-      for (const [k, v] of Object.entries(res as Record<string, unknown>)) {
-        if (v && typeof v === 'object') {
-          const obj = v as { providerAlias?: string; id?: unknown; name?: unknown; type?: unknown }
-          list.push({
-            providerAlias: obj.providerAlias,
-            id: typeof obj.id === 'string' ? obj.id : k,
-            name: typeof obj.name === 'string' ? obj.name : undefined,
-            type: typeof obj.type === 'string' ? obj.type : undefined,
-          })
-        }
+      for (const v of Object.values(res as Record<string, unknown>)) {
+        if (Array.isArray(v)) collect(v as unknown[])
+        else if (v && typeof v === 'object') collect([v])
       }
     }
     fetchedCustoms = list

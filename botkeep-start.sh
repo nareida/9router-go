@@ -138,4 +138,16 @@ ok "Starting 9router-go $RESOLVED_VERSION on 0.0.0.0:$APP_PORT"
 ok "Data dir: $DATA_DIR"
 ok "Binary:   $BIN"
 
-exec "$BIN" --background
+# Launch MUST stay foreground (never `--background`): the panel treats the
+# start command as the workload process, so a detaching daemon makes it look
+# dead and the panel kills the child.
+#
+# The binary picks its own mode from stdin: a TTY (the panel console) gets an
+# interactive menu — 1) dashboard / 2) background / 3) foreground — which
+# blocks the boot. v1.9.21 added that menu; <=v1.9.20 booted straight away.
+# Stdin from a pipe is not a character device, so the binary skips the menu
+# and runs the server in this process, which is exactly what the panel wants.
+# `</dev/null` is NOT enough: /dev/null is a char device, so the menu still
+# prints first and only the EOF fallback saves the boot.
+# Tested against v1.9.21: no menu, server ready, graceful SIGTERM shutdown.
+exec "$BIN" < <(printf '')

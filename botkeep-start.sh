@@ -138,4 +138,4 @@ ok "Starting 9router-go $RESOLVED_VERSION on 0.0.0.0:$APP_PORT"
 ok "Data dir: $DATA_DIR"
 ok "Binary:   $BIN"
 
-exec "$BIN"
+exec "$BIN" --background

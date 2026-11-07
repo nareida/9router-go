@@ -113,7 +113,8 @@
 
   function handleSubmit(e?: SubmitEvent) {
     e?.preventDefault()
-    if (!formName.trim() || !formPrefix.trim() || !formBaseUrl.trim() || submitting) return
+    // Prefix optional: the backend derives one from the name when blank.
+    if (!formName.trim() || !formBaseUrl.trim() || submitting) return
     submitting = true
     Promise.resolve(onSubmit({
       name: formName.trim(),
@@ -141,8 +142,7 @@
       label="Prefix"
       bind:value={formPrefix}
       placeholder={config.prefixPlaceholder}
-      hint={type === 'custom-embedding' ? 'Required. Used as the provider prefix for model IDs (e.g. voyage/voyage-3).' : 'Required. Used as the provider prefix for model IDs.'}
-      required
+      hint={type === 'custom-embedding' ? 'Optional. Used as the provider prefix for model IDs (e.g. voyage/voyage-3). Auto-derived from the name when blank.' : 'Optional. Used as the provider prefix for model IDs. Auto-derived from the name when blank.'}
     />
 
     {#if config.hasApiType}

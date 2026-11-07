@@ -41,7 +41,7 @@
   })
 
   let saveDisabled = $derived(
-    saving || !formName.trim() || !formPrefix.trim() || !formBaseUrl.trim()
+    saving || !formName.trim() || !formBaseUrl.trim()
   )
 
   async function handleValidate() {
@@ -92,7 +92,7 @@
       label="Prefix"
       bind:value={formPrefix}
       placeholder={isAnthropic ? 'ac-prod' : 'oc-prod'}
-      hint="Required. Used as the provider prefix for model IDs."
+      hint="Optional. Used as the provider prefix for model IDs. Auto-derived from the name when blank."
     />
     {#if !isAnthropic}
       <div>

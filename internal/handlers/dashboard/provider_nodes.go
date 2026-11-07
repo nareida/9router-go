@@ -79,6 +79,29 @@ func (h *DashboardHandler) HandleGetProviderNodes(w http.ResponseWriter, r *http
 	})
 }
 
+// nodePrefixFromName derives a routing prefix from a node name when the caller
+// did not supply one: lowercase, non-alphanumerics collapsed to single hyphens.
+// Keeps model IDs like "<prefix>/gpt-4" dialable even for UI users who never
+// saw the prefix field.
+func nodePrefixFromName(name string) string {
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastHyphen = false
+		} else if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "custom"
+	}
+	return out
+}
+
 // HandleCreateProviderNode handles POST /api/provider-nodes.
 func (h *DashboardHandler) HandleCreateProviderNode(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
@@ -107,9 +130,10 @@ func (h *DashboardHandler) HandleCreateProviderNode(w http.ResponseWriter, r *ht
 		handlerutil.WriteJSONError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	// Prefix is optional: derive a slug from the name when absent so the node
+	// still gets a routing alias (prefix is how model IDs resolve to it).
 	if req.Prefix == "" {
-		handlerutil.WriteJSONError(w, http.StatusBadRequest, "prefix is required")
-		return
+		req.Prefix = nodePrefixFromName(req.Name)
 	}
 
 	nodeType := req.Type
@@ -207,9 +231,14 @@ func (h *DashboardHandler) HandleUpdateProviderNode(w http.ResponseWriter, r *ht
 		handlerutil.WriteJSONError(w, http.StatusBadRequest, "name is required")
 		return
 	}
+	// Prefix is optional on update too: keep the existing one when absent.
 	if prefix == "" {
-		handlerutil.WriteJSONError(w, http.StatusBadRequest, "prefix is required")
-		return
+		if nodeData != nil {
+			prefix = nodeData.Prefix
+		}
+		if prefix == "" {
+			prefix = nodePrefixFromName(name)
+		}
 	}
 	nodeType := ""
 	if node.Type != nil {
